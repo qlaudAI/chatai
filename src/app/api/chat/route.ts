@@ -31,14 +31,15 @@ async function getToolIds(): Promise<string[]> {
 // Body: { threadId: string, message: string }
 //
 // Looks up the caller's qlaud per-user secret from Clerk privateMetadata,
-// calls qlaud's threads endpoint with all registered tools attached,
-// and returns the full assistant turn (text + thinking + tool blocks)
-// as JSON.
+// calls qlaud's streaming threads endpoint with all registered tools
+// attached, and pipes the SSE response back to the browser verbatim.
+// The browser parses the events via lib/qlaud-stream.
 //
-// Why JSON not SSE: qlaud v1 doesn't yet support `stream: true` together
-// with `tools`. We pick tools (the substrate showcase — web_search,
-// generate_image dispatch loop) over the streaming cursor. Once qlaud
-// lifts the restriction, this becomes a streaming proxy again.
+// qlaud's streaming-with-tools handler multiplexes tool dispatch
+// progress events into the SSE so the UI can render running/done
+// state inline as each iteration of the tool loop happens. We never
+// re-buffer the stream — the upstream Response.body goes straight
+// into our Response.
 export async function POST(req: Request) {
   const { userId } = await auth();
   if (!userId) {
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
 
   let upstream: Response;
   try {
-    upstream = await qlaud.sendMessage({
+    upstream = await qlaud.streamMessage({
       apiKey: state.qlaud_secret,
       threadId: body.threadId,
       body: {
@@ -94,7 +95,7 @@ export async function POST(req: Request) {
     );
   }
 
-  if (!upstream.ok) {
+  if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => '');
     return NextResponse.json(
       { error: `upstream ${upstream.status}`, detail: text.slice(0, 500) },
@@ -102,8 +103,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Pass the qlaud body through unchanged — it already has the shape
-  // InputBar expects: { content: [...], stop_reason, usage, ... }.
-  const json = await upstream.json();
-  return NextResponse.json(json);
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      'x-qlaud-thread-id':
+        upstream.headers.get('x-qlaud-thread-id') ?? body.threadId,
+      'x-qlaud-assistant-seq':
+        upstream.headers.get('x-qlaud-assistant-seq') ?? '',
+    },
+  });
 }
