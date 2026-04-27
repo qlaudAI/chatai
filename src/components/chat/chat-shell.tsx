@@ -18,15 +18,22 @@ export function ChatShell({
   threadId,
   initialMessages,
   threads,
+  hasOlder: initialHasOlder,
+  oldestLoadedSeq: initialOldestSeq,
 }: {
   threadId: string;
   initialMessages: ThreadMessage[];
   threads: Thread[];
+  hasOlder: boolean;
+  oldestLoadedSeq: number | null;
 }) {
   const router = useRouter();
   const [threadsState, setThreads] = useState<Thread[]>(threads);
   const [messages, setMessages] = useState<ThreadMessage[]>(initialMessages);
   const [streaming, setStreaming] = useState(false);
+  const [hasOlder, setHasOlder] = useState(initialHasOlder);
+  const [oldestSeq, setOldestSeq] = useState<number | null>(initialOldestSeq);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
   async function handleNewThread() {
     const r = await fetch('/api/threads', { method: 'POST' });
@@ -34,6 +41,30 @@ export function ChatShell({
     const t = (await r.json()) as Thread;
     setThreads((prev) => [t, ...prev]);
     router.push(`/chat/${t.id}`);
+  }
+
+  // Load the next page of older messages from qlaud (server-side
+  // backward pagination via before_seq cursor).
+  async function loadOlder() {
+    if (loadingOlder || !hasOlder || oldestSeq == null) return;
+    setLoadingOlder(true);
+    try {
+      const r = await fetch(
+        `/api/threads/${threadId}?before_seq=${oldestSeq}&limit=30`,
+      );
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        data: ThreadMessage[];
+        has_more: boolean;
+        next_before_seq: number | null;
+      };
+      const olderChrono = [...j.data].reverse();
+      setMessages((prev) => [...olderChrono, ...prev]);
+      setHasOlder(j.has_more);
+      setOldestSeq(j.next_before_seq);
+    } finally {
+      setLoadingOlder(false);
+    }
   }
 
   return (
@@ -63,6 +94,9 @@ export function ChatShell({
         <MessageStream
           messages={messages}
           streaming={streaming}
+          hasOlder={hasOlder}
+          loadingOlder={loadingOlder}
+          onLoadOlder={loadOlder}
         />
         <InputBar
           threadId={threadId}

@@ -5,9 +5,10 @@ import { ensureQlaudState } from '@/lib/user-state';
 
 export const runtime = 'nodejs';
 
-// GET /api/threads/:id — full message history of one thread.
+// GET /api/threads/:id?before_seq=N&limit=30 — paginated message list.
+// MessageStream calls this with before_seq=<oldest visible> for "Load older".
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { userId } = await auth();
@@ -22,10 +23,18 @@ export async function GET(
     );
   }
   const { id } = await params;
+  const url = new URL(req.url);
+  const beforeSeqRaw = url.searchParams.get('before_seq');
+  const limitRaw = url.searchParams.get('limit');
+  const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
+  const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 30;
+
   const r = await qlaud.listThreadMessages({
     apiKey: state.qlaud_secret,
     threadId: id,
-    limit: 200,
+    order: 'desc',
+    limit,
+    beforeSeq,
   });
   return NextResponse.json(r);
 }

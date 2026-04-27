@@ -1,57 +1,73 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { ThreadMessage } from '@/lib/qlaud';
 import { Markdown } from './markdown';
 import { ThinkingBlock } from './thinking-block';
 import { ToolExecution, type ToolBlock } from './tool-execution';
 import { StreamingCursor } from './streaming-cursor';
 
-const INITIAL_VISIBLE = 30;
-const PAGE_SIZE = 20;
-
-// Renders the conversation as a sequence of message bubbles. Each
-// assistant turn may contain text, thinking, and tool_use/tool_result
-// blocks — we walk the content array and render each block in order.
+// Renders the conversation as message bubbles. Each assistant turn may
+// contain text, thinking, and tool_use/tool_result blocks — we walk
+// the content array and render each block in order.
 //
-// Pagination: shows the most recent INITIAL_VISIBLE messages. Older
-// messages are loaded but hidden until the user clicks "Load older",
-// which reveals PAGE_SIZE more. Avoids paint-blocking on long threads.
-//
-// Why client-windowed not server-paginated: qlaud v1's pagination is
-// forward-only (after_seq). For a chat UI we want to lazy-load
-// backwards. Until qlaud supports before_seq, we fetch the full
-// (capped) history server-side and slice client-side.
+// Pagination: server-driven via qlaud's before_seq cursor. ChatShell
+// owns the cursor state and the loadOlder fetcher; this component just
+// renders the data + the "Load older" affordance + preserves scroll
+// position when older messages get prepended.
 export function MessageStream({
   messages,
   streaming,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
 }: {
   messages: ThreadMessage[];
   streaming: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+  const prevFirstSeqRef = useRef<number | null>(null);
+  const prevScrollHeightRef = useRef(0);
 
-  // Auto-grow visible window so freshly-sent messages always render.
-  // Without this, a long-running session that hits >INITIAL_VISIBLE
-  // turns would clip its own latest replies.
-  useEffect(() => {
-    if (messages.length > visibleCount) {
-      const newTurns = messages.length - visibleCount;
-      // Only grow when new messages arrive at the tail (turn happened),
-      // not when we're paginating backwards.
-      if (newTurns <= 4) setVisibleCount(messages.length);
+  // Track current top message + scroll height BEFORE render so the
+  // post-render layout effect can restore scroll position when older
+  // messages get prepended (otherwise the user's view jumps to the
+  // top of the page after "Load older").
+  const firstSeq = messages[0]?.seq ?? null;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (
+      prevFirstSeqRef.current !== null &&
+      firstSeq !== null &&
+      firstSeq < prevFirstSeqRef.current
+    ) {
+      // Older messages were prepended — keep the previously-top message
+      // at the same viewport position.
+      const heightDelta = el.scrollHeight - prevScrollHeightRef.current;
+      el.scrollTop = el.scrollTop + heightDelta;
     }
-  }, [messages.length, visibleCount]);
+    prevFirstSeqRef.current = firstSeq;
+    prevScrollHeightRef.current = el.scrollHeight;
+  }, [firstSeq, messages.length]);
 
+  // On new turns at the tail (or on initial paint), scroll to bottom.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    const lastSeq = messages[messages.length - 1]?.seq ?? null;
+    // Only auto-scroll when the LAST message is the new one (a turn
+    // happened) — not when older messages were prepended.
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 200 || streaming;
+    if (nearBottom && lastSeq !== null) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages, streaming]);
-
-  const hasOlder = messages.length > visibleCount;
-  const visible = hasOlder ? messages.slice(-visibleCount) : messages;
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -60,21 +76,20 @@ export function MessageStream({
         {hasOlder && (
           <div className="mb-6 text-center">
             <button
-              onClick={() =>
-                setVisibleCount((v) => Math.min(v + PAGE_SIZE, messages.length))
-              }
-              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={onLoadOlder}
+              disabled={loadingOlder}
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
             >
-              Load older messages ({messages.length - visibleCount} more)
+              {loadingOlder ? 'Loading…' : 'Load older messages'}
             </button>
           </div>
         )}
         <div className="space-y-6">
-          {visible.map((m, i) => (
+          {messages.map((m, i) => (
             <MessageRow
               key={`${m.seq}-${i}`}
               message={m}
-              streaming={streaming && i === visible.length - 1 && m.role === 'assistant'}
+              streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
             />
           ))}
         </div>

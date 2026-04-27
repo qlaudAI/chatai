@@ -28,11 +28,16 @@ export default async function ChatThreadPage({
 
   const { threadId } = await params;
 
+  // Fetch the latest 30 messages newest-first, then reverse for
+  // chronological display. Cursor for "Load older" is the seq of the
+  // oldest message we just received.
+  const PAGE_SIZE = 30;
   const [history, threadList] = await Promise.all([
     qlaud.listThreadMessages({
       apiKey: state.qlaud_secret,
       threadId,
-      limit: 200,
+      order: 'desc',
+      limit: PAGE_SIZE,
     }),
     qlaud.listThreads({
       apiKey: state.qlaud_secret,
@@ -41,11 +46,16 @@ export default async function ChatThreadPage({
     }),
   ]);
 
+  const initialMessages = [...history.data].reverse();
+  const oldestSeq = initialMessages.length > 0 ? initialMessages[0]!.seq : null;
+
   return (
     <ChatShell
       threadId={threadId}
-      initialMessages={history.data}
+      initialMessages={initialMessages}
       threads={threadList.data}
+      hasOlder={history.has_more}
+      oldestLoadedSeq={oldestSeq}
     />
   );
 }

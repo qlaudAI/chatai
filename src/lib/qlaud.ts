@@ -152,10 +152,31 @@ export const qlaud = {
     );
   },
 
-  /** GET /v1/threads/:id/messages — full history of a single thread. */
-  listThreadMessages: (args: { apiKey: string; threadId: string; limit?: number }) => {
+  /** GET /v1/threads/:id/messages — paginated message list.
+   *
+   *  For chat UIs (newest first, scroll up for older):
+   *    initial:  listThreadMessages({ threadId, order: 'desc', limit: 30 })
+   *    older:    listThreadMessages({ threadId, order: 'desc', limit: 30,
+   *                                   beforeSeq: previousResponse.next_before_seq })
+   *
+   *  For log-replay UIs (oldest first):
+   *    initial:  listThreadMessages({ threadId, limit: 50 })
+   *    next:     listThreadMessages({ threadId, limit: 50,
+   *                                   afterSeq: previousResponse.next_after_seq })
+   */
+  listThreadMessages: (args: {
+    apiKey: string;
+    threadId: string;
+    limit?: number;
+    order?: 'asc' | 'desc';
+    afterSeq?: number | null;
+    beforeSeq?: number | null;
+  }) => {
     const url = new URL(`${BASE()}/v1/threads/${args.threadId}/messages`);
     url.searchParams.set('limit', String(args.limit ?? 100));
+    if (args.order) url.searchParams.set('order', args.order);
+    if (args.afterSeq != null) url.searchParams.set('after_seq', String(args.afterSeq));
+    if (args.beforeSeq != null) url.searchParams.set('before_seq', String(args.beforeSeq));
     return fetch(url, { headers: { 'x-api-key': args.apiKey } }).then(
       async (r) => {
         if (!r.ok) {
@@ -166,6 +187,7 @@ export const qlaud = {
           data: ThreadMessage[];
           has_more: boolean;
           next_after_seq: number | null;
+          next_before_seq: number | null;
         };
       },
     );
