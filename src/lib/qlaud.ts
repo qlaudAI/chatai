@@ -171,10 +171,16 @@ export const qlaud = {
     );
   },
 
-  /** POST /v1/threads/:id/messages — STREAMING. Returns the raw upstream
-   *  Response so the caller can pipe `body` straight back to its own
-   *  client without re-buffering. The /api/chat route uses this. */
-  streamMessage: async (args: {
+  /** POST /v1/threads/:id/messages — non-streaming. Returns the full
+   *  assistant turn (text + thinking + tool_use/tool_result blocks)
+   *  after qlaud has run the tool dispatch loop to completion.
+   *
+   *  Why not streaming: as of v1, qlaud doesn't allow `stream: true`
+   *  combined with `tools`. We pick tools (the substrate showcase)
+   *  over the streaming cursor. Once qlaud lifts that restriction,
+   *  this becomes a streaming proxy again.
+   */
+  sendMessage: async (args: {
     apiKey: string;
     threadId: string;
     body: Record<string, unknown>;
@@ -185,7 +191,7 @@ export const qlaud = {
         'x-api-key': args.apiKey,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ ...args.body, stream: true }),
+      body: JSON.stringify(args.body),
     });
   },
 

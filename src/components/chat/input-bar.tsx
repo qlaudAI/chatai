@@ -2,15 +2,17 @@
 
 import { useRef, useState } from 'react';
 import type { ThreadMessage } from '@/lib/qlaud';
-import { parseChatStream } from '@/lib/qlaud-stream';
 
-// Composes the user's message and drives the streaming turn:
-//   1. POST /api/chat with the message → SSE response
-//   2. Parse the SSE into typed events
-//   3. Build up the in-progress assistant message and push updates to
-//      ChatShell on every delta
-//   4. On message_stop, flip streaming off — qlaud has already persisted
-//      the assistant turn server-side.
+// Composes the user's message and runs the turn:
+//   1. POST /api/chat with { threadId, message }
+//   2. Await the JSON response — qlaud has already run any tool
+//      dispatches in its own loop on the server side, so what comes
+//      back is the FULL assistant turn (text + thinking + tool blocks).
+//   3. Push the placeholder + final message up to ChatShell.
+//
+// Why no SSE: qlaud v1 doesn't yet support streaming + tools together.
+// We chose tools (the substrate showcase) over the streaming cursor.
+// The placeholder cursor still spins while we wait for the response.
 export function InputBar({
   threadId,
   disabled,
@@ -42,15 +44,13 @@ export function InputBar({
       created_at: now,
     });
 
-    // Push an empty assistant placeholder immediately so the streaming
-    // cursor renders before the first byte arrives. Subsequent updates
-    // mutate this same row (matched on seq below). Without this the
-    // user sees a totally blank screen during the first ~200ms of
-    // model latency and assumes nothing is happening.
-    const errorMessage = (text: string): ThreadMessage => ({
+    // Push an empty assistant placeholder so the streaming cursor
+    // renders while qlaud thinks (can take several seconds when tools
+    // fire, since each webhook round-trip is sequential within a turn).
+    const errorMessage = (msg: string): ThreadMessage => ({
       seq: 1_000_000_000,
       role: 'assistant',
-      content: [{ type: 'text', text: `⚠️ ${text}` }],
+      content: [{ type: 'text', text: `⚠️ ${msg}` }],
       request_id: null,
       created_at: Date.now(),
     });
@@ -75,10 +75,7 @@ export function InputBar({
       return;
     }
 
-    if (!res.ok || !res.body) {
-      // Read the error body — our route handlers return JSON like
-      // { error, detail } on failure. Surface it so users (and we) can
-      // see what went wrong instead of staring at a blank screen.
+    if (!res.ok) {
       const detail = await res.text().catch(() => '');
       let parsed: { error?: string; detail?: string } | null = null;
       try {
@@ -86,116 +83,31 @@ export function InputBar({
       } catch {
         /* not JSON, fall through */
       }
-      const msg = parsed?.detail || parsed?.error || detail.slice(0, 300) || `HTTP ${res.status}`;
+      const msg =
+        parsed?.detail || parsed?.error || detail.slice(0, 300) || `HTTP ${res.status}`;
       onAssistantUpdate(errorMessage(msg));
       onTurnEnd();
       return;
     }
 
-    // Track the in-progress assistant message — we mutate this object as
-    // deltas arrive and push the latest snapshot up to ChatShell.
-    type Block =
-      | { type: 'text'; text: string }
-      | { type: 'thinking'; thinking: string }
-      | { type: 'tool_use'; id: string; name: string; input_json: string; input?: unknown }
-      | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error: boolean };
-
-    const blocksByIndex = new Map<number, Block>();
-    const order: number[] = [];
-
-    const buildSnapshot = (): ThreadMessage => {
-      const content = order
-        .map((i) => blocksByIndex.get(i))
-        .filter((b): b is Block => Boolean(b))
-        .map((b) => {
-          if (b.type === 'tool_use') {
-            let input: unknown = b.input;
-            if (input === undefined && b.input_json) {
-              try {
-                input = JSON.parse(b.input_json);
-              } catch {
-                input = b.input_json;
-              }
-            }
-            return { type: 'tool_use', id: b.id, name: b.name, input };
-          }
-          return b;
-        });
-      return {
-        seq: 1_000_000_000,
-        role: 'assistant',
-        content,
-        request_id: null,
-        created_at: Date.now(),
-      };
-    };
-
-    const ensure = (i: number, block: Block) => {
-      if (!blocksByIndex.has(i)) {
-        blocksByIndex.set(i, block);
-        order.push(i);
-      }
-    };
-
-    let sawAnyEvent = false;
+    let json: { content?: unknown; seq?: number; created_at?: number };
     try {
-      for await (const ev of parseChatStream(res.body)) {
-        sawAnyEvent = true;
-        switch (ev.type) {
-          case 'text_delta': {
-            const existing = blocksByIndex.get(ev.index);
-            if (existing && existing.type === 'text') {
-              existing.text += ev.text;
-            } else {
-              ensure(ev.index, { type: 'text', text: ev.text });
-            }
-            break;
-          }
-          case 'thinking_delta': {
-            const existing = blocksByIndex.get(ev.index);
-            if (existing && existing.type === 'thinking') {
-              existing.thinking += ev.text;
-            } else {
-              ensure(ev.index, { type: 'thinking', thinking: ev.text });
-            }
-            break;
-          }
-          case 'tool_use_start': {
-            ensure(ev.index, {
-              type: 'tool_use',
-              id: ev.tool_use_id,
-              name: ev.name,
-              input_json: '',
-            });
-            break;
-          }
-          case 'tool_use_input_delta': {
-            const existing = blocksByIndex.get(ev.index);
-            if (existing && existing.type === 'tool_use') {
-              existing.input_json += ev.partial_json;
-            }
-            break;
-          }
-          case 'content_block_stop':
-          case 'message_start':
-            break;
-          case 'message_stop':
-            break;
-        }
-        onAssistantUpdate(buildSnapshot());
-      }
+      json = await res.json();
     } catch (e) {
-      onAssistantUpdate(errorMessage(`stream interrupted: ${(e as Error).message}`));
-    } finally {
-      // If qlaud returned 200 with an empty body the cursor would
-      // blink forever otherwise — surface that as a clear failure.
-      if (!sawAnyEvent) {
-        onAssistantUpdate(
-          errorMessage('upstream returned no events. Check Vercel function logs for /api/chat.'),
-        );
-      }
+      onAssistantUpdate(errorMessage(`invalid JSON from upstream: ${(e as Error).message}`));
       onTurnEnd();
+      return;
     }
+
+    const content = Array.isArray(json.content) ? json.content : [];
+    onAssistantUpdate({
+      seq: 1_000_000_000,
+      role: 'assistant',
+      content,
+      request_id: null,
+      created_at: typeof json.created_at === 'number' ? json.created_at : Date.now(),
+    });
+    onTurnEnd();
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
