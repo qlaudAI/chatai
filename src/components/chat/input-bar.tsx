@@ -36,26 +36,35 @@ export function InputBar({
     if (taRef.current) taRef.current.style.height = 'auto';
 
     const now = Date.now();
+
+    // Each turn gets a unique pair of negative placeholder seqs so
+    // they don't collide with each other (every assistant turn used
+    // to share seq 1_000_000_000 and overwrote the prior reply, which
+    // is why the chat looked like it had no history). Real qlaud seqs
+    // are positive integers, so negatives can never collide.
+    const userPlaceholderSeq = -now * 2;
+    const assistantPlaceholderSeq = -now * 2 - 1;
+
     onTurnStart({
-      seq: -1,
+      seq: userPlaceholderSeq,
       role: 'user',
       content: [{ type: 'text', text: trimmed }],
       request_id: null,
       created_at: now,
     });
 
-    // Push an empty assistant placeholder so the streaming cursor
-    // renders while qlaud thinks (can take several seconds when tools
-    // fire, since each webhook round-trip is sequential within a turn).
+    // Push an empty assistant placeholder so the cursor renders while
+    // qlaud thinks (can take several seconds when tools fire, since
+    // each webhook round-trip is sequential within a turn).
     const errorMessage = (msg: string): ThreadMessage => ({
-      seq: 1_000_000_000,
+      seq: assistantPlaceholderSeq,
       role: 'assistant',
       content: [{ type: 'text', text: `⚠️ ${msg}` }],
       request_id: null,
       created_at: Date.now(),
     });
     onAssistantUpdate({
-      seq: 1_000_000_000,
+      seq: assistantPlaceholderSeq,
       role: 'assistant',
       content: [],
       request_id: null,
@@ -101,7 +110,7 @@ export function InputBar({
 
     const content = Array.isArray(json.content) ? json.content : [];
     onAssistantUpdate({
-      seq: 1_000_000_000,
+      seq: assistantPlaceholderSeq,
       role: 'assistant',
       content,
       request_id: null,

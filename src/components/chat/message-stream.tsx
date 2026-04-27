@@ -1,15 +1,27 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ThreadMessage } from '@/lib/qlaud';
 import { Markdown } from './markdown';
 import { ThinkingBlock } from './thinking-block';
 import { ToolExecution, type ToolBlock } from './tool-execution';
 import { StreamingCursor } from './streaming-cursor';
 
+const INITIAL_VISIBLE = 30;
+const PAGE_SIZE = 20;
+
 // Renders the conversation as a sequence of message bubbles. Each
 // assistant turn may contain text, thinking, and tool_use/tool_result
 // blocks — we walk the content array and render each block in order.
+//
+// Pagination: shows the most recent INITIAL_VISIBLE messages. Older
+// messages are loaded but hidden until the user clicks "Load older",
+// which reveals PAGE_SIZE more. Avoids paint-blocking on long threads.
+//
+// Why client-windowed not server-paginated: qlaud v1's pagination is
+// forward-only (after_seq). For a chat UI we want to lazy-load
+// backwards. Until qlaud supports before_seq, we fetch the full
+// (capped) history server-side and slice client-side.
 export function MessageStream({
   messages,
   streaming,
@@ -18,6 +30,19 @@ export function MessageStream({
   streaming: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+
+  // Auto-grow visible window so freshly-sent messages always render.
+  // Without this, a long-running session that hits >INITIAL_VISIBLE
+  // turns would clip its own latest replies.
+  useEffect(() => {
+    if (messages.length > visibleCount) {
+      const newTurns = messages.length - visibleCount;
+      // Only grow when new messages arrive at the tail (turn happened),
+      // not when we're paginating backwards.
+      if (newTurns <= 4) setVisibleCount(messages.length);
+    }
+  }, [messages.length, visibleCount]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -25,18 +50,31 @@ export function MessageStream({
     el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
 
+  const hasOlder = messages.length > visibleCount;
+  const visible = hasOlder ? messages.slice(-visibleCount) : messages;
+
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-8">
-        {messages.length === 0 && !streaming && (
-          <EmptyState />
+        {messages.length === 0 && !streaming && <EmptyState />}
+        {hasOlder && (
+          <div className="mb-6 text-center">
+            <button
+              onClick={() =>
+                setVisibleCount((v) => Math.min(v + PAGE_SIZE, messages.length))
+              }
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              Load older messages ({messages.length - visibleCount} more)
+            </button>
+          </div>
         )}
         <div className="space-y-6">
-          {messages.map((m, i) => (
+          {visible.map((m, i) => (
             <MessageRow
               key={`${m.seq}-${i}`}
               message={m}
-              streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
+              streaming={streaming && i === visible.length - 1 && m.role === 'assistant'}
             />
           ))}
         </div>
