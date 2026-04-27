@@ -30,10 +30,10 @@ async function getToolIds(): Promise<string[]> {
 //
 // Body: { threadId: string, message: string }
 //
-// Looks up the caller's qlaud per-user secret from Supabase, calls
-// qlaud's streaming threads endpoint with all registered tools attached,
-// and pipes the SSE response back to the browser verbatim. The browser
-// parses the events via lib/qlaud-stream.
+// Looks up the caller's qlaud per-user secret from Clerk privateMetadata,
+// calls qlaud's streaming threads endpoint with all registered tools
+// attached, and pipes the SSE response back to the browser verbatim.
+// The browser parses the events via lib/qlaud-stream.
 //
 // We never re-buffer the stream — the upstream Response.body goes
 // straight into the new Response. Token-by-token latency on the wire

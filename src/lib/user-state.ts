@@ -1,7 +1,13 @@
+import 'server-only';
 import { clerkClient } from '@clerk/nextjs/server';
 
 // Where we keep each user's qlaud footprint. Lives in Clerk's
 // privateMetadata — server-only, ~8KB per user limit (we use ~200 bytes).
+//
+// SECURITY: this module is server-only. The qlaud_secret it returns
+// grants access to the user's per-user key — anyone with it can spend
+// against their cap. Never return it to the browser; route handlers
+// that use it must call qlaud server-side and proxy results.
 //
 // Why not Supabase: with this much data per user, paying for a separate
 // database (and the SDK + migrations + RLS policies that come with it)

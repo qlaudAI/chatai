@@ -88,6 +88,5 @@ MIT. See [LICENSE](LICENSE).
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (one-page diagram of how
-Clerk + qlaud fit together) and [docs/PLAN.md](docs/PLAN.md)
-(the original build plan, kept in-tree as a reference).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — one-page diagram of how
+Clerk + qlaud fit together, plus a file map of the whole codebase.

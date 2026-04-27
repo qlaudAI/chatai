@@ -1,13 +1,21 @@
+import 'server-only';
 import { env } from './env';
 
 // Typed wrapper over the qlaud REST API. Single source of truth for all
 // qlaud calls in the app — handlers and server components import from
 // here and don't touch fetch() directly.
 //
+// SECURITY: this module is server-only. The `import 'server-only'` line
+// at the top makes Next.js refuse to bundle it for the browser — any
+// client component that imports the runtime `qlaud` object (instead of
+// just types) will fail the build. The master key (env.QLAUD_MASTER_KEY)
+// and per-user secrets must never reach the browser; they grant the
+// ability to mint new keys and burn the spend cap.
+//
 // Two auth patterns:
-//   - Master key: server-side only, used for /v1/keys, /v1/tools, /v1/usage.
-//   - Per-user key: minted at signup, stored per-user in Supabase, used
-//     for /v1/threads/* and /v1/search.
+//   - Master key: used for /v1/keys, /v1/tools, /v1/usage.
+//   - Per-user key: minted at signup, stashed in Clerk privateMetadata,
+//     read via lib/user-state.ts. Used for /v1/threads/* and /v1/search.
 
 const BASE = () => env.QLAUD_BASE_URL();
 const MASTER = () => env.QLAUD_MASTER_KEY();
@@ -44,7 +52,7 @@ export class QlaudError extends Error {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type ApiKeyMintResult = {
+type ApiKeyMintResult = {
   id: string;
   name: string;
   prefix: string;
@@ -78,7 +86,7 @@ export type ToolDefinition = {
   timeout_ms?: number;
 };
 
-export type ToolRegisterResult = ToolDefinition & {
+type ToolRegisterResult = ToolDefinition & {
   id: string;
   secret: string; // returned ONCE
 };

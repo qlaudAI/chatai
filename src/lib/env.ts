@@ -1,6 +1,12 @@
+import 'server-only';
+
 /** Typed env access. Throws on missing required vars at first use so we
  *  fail fast in dev / on first request, not silently. The list mirrors
- *  .env.example one-for-one — keep both in sync. */
+ *  .env.example one-for-one — keep both in sync.
+ *
+ *  SECURITY: server-only — every getter exposes a secret (qlaud master
+ *  key, Clerk webhook secret, tool HMAC secrets). Client code that
+ *  needs a public value should read process.env.NEXT_PUBLIC_… directly. */
 
 const required = (name: string): string => {
   const v = process.env[name];

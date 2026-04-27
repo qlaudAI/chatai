@@ -11,7 +11,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'chatai — open-source AI chat on qlaud',
   description:
-    'Production-quality chat app built on qlaud, Clerk, and Supabase. Fork it, swap env vars, deploy.',
+    'Production-quality chat app built on qlaud + Clerk. Fork it, swap env vars, deploy.',
 };
 
 export default function RootLayout({

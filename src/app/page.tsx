@@ -79,7 +79,7 @@ export default async function LandingPage() {
         </ul>
 
         <p className="mt-12 text-xs text-muted-foreground">
-          Built with Next.js, Clerk, Supabase, and qlaud. MIT licensed.
+          Built with Next.js, Clerk, and qlaud. MIT licensed.
         </p>
       </main>
     </div>
